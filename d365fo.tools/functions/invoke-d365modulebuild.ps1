@@ -8,7 +8,9 @@
 
         Specify -IncludeReports to also compile reports using "ReportsC.exe"
 
-        Prints a per module summary to the console and exits with a terminating error when any module fails
+        Returns a result object per module and writes the compiler errors to the console when a module fails
+
+        Exits with a terminating error when any module fails
 
     .PARAMETER Module
         The package to build
@@ -58,7 +60,8 @@
 
         This will use the default paths and start the xppc.exe with the needed parameters to compile the Essence-Temp package.
         When the X++ compile succeeds it will start the labelc.exe to compile the labels.
-        A summary with error and warning counts is written to the console.
+        The build result is returned as an object.
+        If the build fails, the compiler errors are written to the console.
         The default output from all the different steps will be silenced.
 
     .EXAMPLE
@@ -263,7 +266,6 @@ function Invoke-D365ModuleBuild {
             # Stage 2: labels, only when the X++ compile succeeded
             $labelExitCode = $null
             $labelFailure = $null
-            $labelsCompiled = $false
 
             $xppcOk = (-not $xppcFailed) -and ($null -eq $logFailure) -and ($errorCount -eq 0) -and ($xppcExitCode -eq 0)
 
@@ -277,8 +279,6 @@ function Invoke-D365ModuleBuild {
 
                 $labelExitCode = Invoke-BuildTool -Executable $labelExecutable -Params $labelParams -ShowOriginalProgress:$ShowOriginalProgress
 
-                $labelsCompiled = $true
-
                 if ($labelExitCode -ne 0) {
                     $labelFailure = "[$moduleName] label compilation failed with exit code $labelExitCode. Review the label log shown below."
                 }
@@ -288,7 +288,6 @@ function Invoke-D365ModuleBuild {
             $reportsExitCode = $null
             $reportsFailure = $null
             $reportsCompiled = $false
-            $reportsSkipped = (-not $IncludeReports)
 
             if ($IncludeReports -and $xppcOk -and ($null -eq $labelFailure)) {
                 $reportsParams = @("-metadata=`"$MetaDataDir`"",
@@ -315,83 +314,37 @@ function Invoke-D365ModuleBuild {
                 $failed = $true
             }
 
-            $displayErrorCount = "$errorCount"
-            $displayWarningCount = "$warningCount"
-            if ($null -ne $logFailure) {
-                $displayErrorCount = 'Unavailable'
-                $displayWarningCount = 'Unavailable'
-            }
-
-            $summary = @(
-                "Model:     $moduleName"
-                "Errors:    $displayErrorCount"
-                "Warnings:  $displayWarningCount"
-                "Log:       $logFile"
-                "XML log:   $logXmlFile"
-            )
-
-            if ($labelsCompiled) {
-                $summary += @(
-                    "Labels:    exit code $labelExitCode"
-                    "Label log: $labelLogFile"
-                )
-            }
-            else {
-                $summary += "Labels:    skipped (X++ compile did not succeed)"
-            }
-
-            if ($reportsCompiled) {
-                $summary += @(
-                    "Reports:   exit code $reportsExitCode"
-                    "Reports log: $reportsLogFile"
-                )
-            }
-            elseif ($reportsSkipped) {
-                $summary += "Reports:   skipped (-IncludeReports not specified)"
-            }
-            else {
-                $summary += "Reports:   skipped (previous stage did not succeed)"
-            }
-
-            Write-PSFMessage -Level Host -Message ($summary -join [Environment]::NewLine)
-
             if ($logFailure) {
-                Write-PSFMessage -Level Host -Message $logFailure
+                Write-PSFHostColor -String $logFailure
             }
 
             if ($failed -and (Test-Path -LiteralPath $logFile -PathType Leaf)) {
-                $errorLines = @(Select-String -LiteralPath $logFile -Pattern "error" -SimpleMatch -CaseSensitive:$false -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Line -First 25)
+                $errorLines = @(Select-String -LiteralPath $logFile -Pattern "error" -SimpleMatch -CaseSensitive:$false -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Line | Where-Object { $_ -notmatch '^(Errors|Warnings):' } | Select-Object -First 25)
 
                 foreach ($errorLine in $errorLines) {
-                    Write-PSFMessage -Level Host -Message $errorLine
+                    Write-PSFHostColor -String $errorLine
                 }
             }
 
             if ($labelFailure) {
-                Write-PSFMessage -Level Host -Message $labelFailure
+                Write-PSFHostColor -String $labelFailure
 
                 if (Test-Path -LiteralPath $labelErrorFile -PathType Leaf) {
                     $labelErrorLines = @(Get-Content -LiteralPath $labelErrorFile -ErrorAction SilentlyContinue | Select-Object -First 25)
 
                     foreach ($labelErrorLine in $labelErrorLines) {
-                        Write-PSFMessage -Level Host -Message $labelErrorLine
+                        Write-PSFHostColor -String $labelErrorLine
                     }
                 }
             }
 
             if ($reportsFailure) {
-                Write-PSFMessage -Level Host -Message $reportsFailure
-            }
-
-            if ($failed) {
-                $failedModules.Add($moduleName) | Out-Null
-                Stop-PSFFunction -Message "[$moduleName] build failed. Review the compiler logs shown above." -Category InvalidResult -Continue
-                continue
+                Write-PSFHostColor -String $reportsFailure
             }
 
             [PSCustomObject]@{
                 Module          = $moduleName
-                Success         = $true
+                Success         = (-not $failed)
                 XppcExitCode    = $xppcExitCode
                 LabelExitCode   = $labelExitCode
                 ReportsExitCode = $reportsExitCode
@@ -403,6 +356,12 @@ function Invoke-D365ModuleBuild {
                 LabelErrorFile  = $labelErrorFile
                 ReportsLogFile  = $(if ($reportsCompiled) { $reportsLogFile } else { $null })
                 PSTypeName      = 'D365FO.TOOLS.ModuleBuildOutput'
+            }
+
+            if ($failed) {
+                $failedModules.Add($moduleName) | Out-Null
+                Stop-PSFFunction -Message "[$moduleName] build failed. Review the compiler logs shown above." -Category InvalidResult -Continue
+                continue
             }
         }
 

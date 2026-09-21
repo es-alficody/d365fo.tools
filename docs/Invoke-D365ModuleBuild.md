@@ -23,7 +23,9 @@ Build a package / module using the builtin "xppc.exe" executable to compile sour
 
 Specify -IncludeReports to also compile reports using "ReportsC.exe"
 
-Prints a per module summary to the console and exits with a terminating error when any module fails
+Returns a result object per module and writes the compiler errors to the console when a module fails
+
+Exits with a terminating error when any module fails
 
 ## EXAMPLES
 
@@ -34,7 +36,8 @@ Invoke-D365ModuleBuild -Module Essence-Temp
 
 This will use the default paths and start the xppc.exe with the needed parameters to compile the Essence-Temp package.
 When the X++ compile succeeds it will start the labelc.exe to compile the labels.
-A summary with error and warning counts is written to the console.
+The build result is returned as an object.
+If the build fails, the compiler errors are written to the console.
 The default output from all the different steps will be silenced.
 
 ### EXAMPLE 2
